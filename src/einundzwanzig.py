@@ -1,12 +1,14 @@
 from telegram import Update
 import requests
 from bs4 import BeautifulSoup
+from telegram.chat import Chat
 from telegram.ext.callbackcontext import CallbackContext
+from textwrap import dedent
 import json
 import config
 import qrcode
 import os
-
+import logging
 
 # Define podcast formats
 urlAll = '/podcast/'
@@ -30,9 +32,13 @@ def getEpisode(url: str) -> str:
 def episode(update: Update, context: CallbackContext):
     """
     Sends a link to the most recent podcast episode
-    """  
+    """
+
     try:
-        format = str(context.args[0]).lower()
+        if context.args != None:
+            format = str(context.args[0]).lower()
+        else:
+            format = "alle"
     except: 
         format = "alle"
     
@@ -49,9 +55,14 @@ def episode(update: Update, context: CallbackContext):
     else:
         message = 'Das ist kein gültiges Podcast-Format! Bitte gibt eins der folgenden Formate an: Alle, Interviews, Lesestunde, News, Weg'
 
-    context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+    if update.effective_chat != None:
+        context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
-def getInvoice(amt, shoutout):
+def getInvoice(amt: int, memo: str) -> str:
+    """
+    Returns a Lightning Invoice from the Tallycoin API
+    """
+
     TALLYDATA = {
     'type': 'fundraiser',
     'id': 'zfxqtu',
@@ -61,14 +72,18 @@ def getInvoice(amt, shoutout):
     }
     
     TALLYDATA['satoshi_amount'] = str(amt)
-    TALLYDATA['message'] = shoutout[0:139]
+    TALLYDATA['message'] = memo
     response = requests.post('https://api.tallyco.in/v1/payment/request/', data=TALLYDATA).text
     dict = json.loads(response)
-    return dict.get("lightning_pay_request")
+    return dict["lightning_pay_request"]
 
-def createQR(text, chatid):
+def createQR(text: str, chatid: str):
+    """
+    Creates a QR Code with the given text and saves it as a png file in the current directory
+    """
+
     img = qrcode.make(text)
-    img.save(str(chatid) + '.png')
+    img.save(chatid + '.png')
 
 def shoutout(update: Update, context: CallbackContext):
     """
@@ -76,24 +91,62 @@ def shoutout(update: Update, context: CallbackContext):
     """
     
     chat = update.effective_chat
-    if chat.type == Chat.PRIVATE:
+
+    if chat != None and chat.type == Chat.PRIVATE and context.args != None:
+
         try:
             value = int(context.args[0])
-            try:
-                shoutout = ' '.join(context.args[1:])
-            except:
-                shoutout = f'Community-Bot Shoutout'
-            invoice = getInvoice(value, shoutout)
-            createQR(invoice, update.effective_chat.id)
-            context.bot.send_message(chat_id=update.effective_chat.id, text= f'Hier ist deine Shoutout-Invoice über {value} sats:')
-            context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(update.effective_chat.id + '.png', 'rb'), caption=str(invoice))
-            try:
-                os.remove(str(update.effective_chat.id) + '.png')
-            except:
-                print('ERROR: QR-Datei konnte nicht gelöscht werden')
-
+            if value < 21_000:
+                update.message.reply_text('Der Betrag muss sich auf mindestens 21.000 sats belaufen')
+                return
         except:
-            context.bot.send_message(chat_id=update.effective_chat.id, text= f'Bitte gib einen gültigen Betrag ein')
+            value_error_message = dedent(f'''
+            <b>Verwendung</b>
+            /shoutout betrag memo
+
+            Bitte gib einen Betrag von mindestens 21.000 sats an.
+            Das Shoutout hat eine maximale Länge von 140 Zeichen.
+            ''')
+            update.message.reply_text(text=value_error_message, parse_mode='HTML')
+            return
+
+        try:
+            memo = ' '.join(context.args[1:])
+            if len(memo) > 140:
+                update.message.reply_text(text='Das Shoutout kann nicht länger als 140 Zeichen sein!')
+                return
+        except:
+            memo = ''
+
+        try:
+            invoice = getInvoice(value, memo)
+        except Exception as e:
+            update.message.reply_text(text='Fehler beim Erstellen der Invoice! Bitte später noch mal versuchen.')
+            logging.error(f'Error while trying to generate invoice: {e}')
+            return
+
+        try:
+            createQR(invoice, str(chat.id))
+        except Exception as e:
+            update.message.reply_text(text='Fehler beim Erstellen des QR Codes. Bitte später noch mal versuchen.')
+            logging.error(f'Error while generating QR Code: {e}')
+            return
+
+        shoutout_message = dedent(f'''
+        <b>Dein Shoutout</b>
+        Betrag: {value} sats
+        Memo: {memo}
+        ''')
+
+        update.message.reply_text(shoutout_message, parse_mode='HTML')
+        update.message.reply_photo(photo=open(f'{chat.id}.png', 'rb'), caption=str(invoice).lower())
+
+        try:
+            os.remove(f'{chat.id}.png')
+        except:
+            logging.error(f'QR Code file {chat.id}.png could not be deleted')
+
     else:
-        context.bot.send_message(chat_id=update.effective_chat.id, text= f'''
-        Shoutouts können nur im direkten Chat mit dem Community Bot gesendet werden. Bitte beginne eine Konvesation mit @einundzwanzigbot!''')
+        update.message.reply_text(text=f'''
+        Shoutouts können nur im direkten Chat mit dem Community Bot gesendet werden. Bitte beginne eine Konversation mit {context.bot.name}!
+        ''')

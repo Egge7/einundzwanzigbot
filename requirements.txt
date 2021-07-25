@@ -1,6 +1,5 @@
 python-telegram-bot
 requests
 beautifulsoup4
-json
 qrcode
-os
+image

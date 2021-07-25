@@ -36,7 +36,7 @@ def start_command(update: Update, context: CallbackContext):
     /shoutout <i>betrag</i> <i>memo</i> - LN Invoice für einen Shoutout (Ab 21k vorgelesen im Podcast)
     """)
 
-    context.bot.send_message(chat_id=update.effective_chat.id, text=welcome_message, parse_mode='HTML', disable_web_page_preview=True)
+    update.message.reply_text(text=welcome_message, parse_mode='HTML', disable_web_page_preview=True)
 
 def taproot_command(update: Update, context: CallbackContext):
     """
